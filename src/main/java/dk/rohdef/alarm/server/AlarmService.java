@@ -20,12 +20,65 @@ import javax.crypto.Cipher;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
 
+import org.apache.commons.configuration.Configuration;
+import org.apache.commons.configuration.ConfigurationException;
+import org.apache.commons.configuration.XMLConfiguration;
 import org.apache.log4j.Logger;
+import org.asteriskjava.manager.AuthenticationFailedException;
+import org.asteriskjava.manager.ManagerConnection;
+import org.asteriskjava.manager.ManagerConnectionFactory;
+import org.asteriskjava.manager.TimeoutException;
+import org.asteriskjava.manager.action.OriginateAction;
+import org.asteriskjava.manager.response.ManagerResponse;
 
 public class AlarmService {
 	private Logger log = Logger.getLogger(AlarmService.class);
 
 	public boolean fireAlarm(int phoneNumber, String uuid, byte[] signature) {
+		if (checkSignature(phoneNumber, uuid, signature)) {
+			Configuration config = null;
+			try {
+				config = new XMLConfiguration("config.xml");
+			} catch (ConfigurationException e) {
+				log.fatal("Configuration not found", e);
+			}
+			String host = config.getString("asterisk.host");
+			String username = config.getString("asterisk.username");
+			String password = config.getString("asterisk.password");
+			
+			ManagerConnectionFactory connectionFactory =
+					new ManagerConnectionFactory(host, username, password);
+			
+			ManagerConnection connection = connectionFactory.createManagerConnection();
+			OriginateAction action = new OriginateAction();
+			action.setChannel("SIP/rulle-mob");
+			action.setContext("voicemenu-custom-1");
+			action.setExten("s");
+			action.setPriority(1);
+			action.setCallerId("Heeeeelp meeee");
+			
+			try {
+				connection.login();
+				ManagerResponse response = connection.sendAction(action, 30000);
+				log.debug(response.getResponse());
+				connection.logoff();
+			} catch (IllegalStateException e) {
+				e.printStackTrace();
+			} catch (IOException e) {
+				e.printStackTrace();
+			} catch (AuthenticationFailedException e) {
+				e.printStackTrace();
+			} catch (TimeoutException e) {
+				e.printStackTrace();
+			}
+			
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	private boolean checkSignature(int phoneNumber, String uuid, byte[] signature) {
 		byte[] signatureBytes = null;
 		try {
 			signatureBytes = (phoneNumber + uuid).getBytes("UTF8");
@@ -34,14 +87,11 @@ public class AlarmService {
 		}
 		byte[] cipherData = getCipherData(signature);
 		
-		if (phoneNumber == 21680621 && Arrays.equals(signatureBytes, cipherData))
-			return true;
-		else
-			return false;
+		return Arrays.equals(signatureBytes, cipherData);
 	}
 	
 	private byte[] getCipherData(byte[] signature) {
-		PublicKey key = readPublicKeyFromFile("21680621_public.pem");
+		PublicKey key = readPublicKeyFromFile("21680621_public.der");
 		byte[] cipherData = null;
 		try {
 			Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
@@ -65,14 +115,7 @@ public class AlarmService {
 	private PublicKey readPublicKeyFromFile(String path) {
 		PublicKey publicKey = null;
 		try {
-//			File keyFile = new File("/var/lib/tomcat6/webapps/" +
-//					"AlarmService/WEB-INF/classes/"+path);
-//			FileInputStream inputStream = new FileInputStream(keyFile);
-//			DataInputStream dataStream = new DataInputStream(inputStream);
-//			byte[] keyBytes = new byte[(int) keyFile.length()];
-//			dataStream.readFully(keyBytes);
-//			dataStream.close();
-			URL cert = new URL("http://localhost/21680621_public.der");
+			URL cert = new URL("http://localhost/"+path);
 			URLConnection connection = cert.openConnection();
 			DataInputStream input = new DataInputStream(
 					connection.getInputStream());

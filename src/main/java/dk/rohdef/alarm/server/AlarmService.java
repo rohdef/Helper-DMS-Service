@@ -20,57 +20,17 @@ import javax.crypto.Cipher;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
 
-import org.apache.commons.configuration.Configuration;
-import org.apache.commons.configuration.ConfigurationException;
-import org.apache.commons.configuration.XMLConfiguration;
 import org.apache.log4j.Logger;
-import org.asteriskjava.manager.AuthenticationFailedException;
-import org.asteriskjava.manager.ManagerConnection;
-import org.asteriskjava.manager.ManagerConnectionFactory;
-import org.asteriskjava.manager.TimeoutException;
-import org.asteriskjava.manager.action.OriginateAction;
-import org.asteriskjava.manager.response.ManagerResponse;
 
 public class AlarmService {
 	private Logger log = Logger.getLogger(AlarmService.class);
 
 	public boolean fireAlarm(int phoneNumber, String uuid, byte[] signature) {
 		if (checkSignature(phoneNumber, uuid, signature)) {
-			Configuration config = null;
-			try {
-				config = new XMLConfiguration("config.xml");
-			} catch (ConfigurationException e) {
-				log.fatal("Configuration not found", e);
-			}
-			String host = config.getString("asterisk.host");
-			String username = config.getString("asterisk.username");
-			String password = config.getString("asterisk.password");
-			
-			ManagerConnectionFactory connectionFactory =
-					new ManagerConnectionFactory(host, username, password);
-			
-			ManagerConnection connection = connectionFactory.createManagerConnection();
-			OriginateAction action = new OriginateAction();
-			action.setChannel("SIP/rulle-mob");
-			action.setContext("voicemenu-custom-1");
-			action.setExten("s");
-			action.setPriority(1);
-			action.setCallerId("Heeeeelp meeee");
-			
-			try {
-				connection.login();
-				ManagerResponse response = connection.sendAction(action, 30000);
-				log.debug(response.getResponse());
-				connection.logoff();
-			} catch (IllegalStateException e) {
-				e.printStackTrace();
-			} catch (IOException e) {
-				e.printStackTrace();
-			} catch (AuthenticationFailedException e) {
-				e.printStackTrace();
-			} catch (TimeoutException e) {
-				e.printStackTrace();
-			}
+			log.info("Valid signature for number: " + phoneNumber + " recieved.");
+			Caller caller = CallerFactory.getCallerFor(phoneNumber);
+			if (!caller.isAlive())
+				caller.start();
 			
 			return true;
 		} else {
@@ -87,15 +47,19 @@ public class AlarmService {
 		}
 		byte[] cipherData = getCipherData(signature);
 		
+		log.debug("Comparing signature");
 		return Arrays.equals(signatureBytes, cipherData);
 	}
 	
 	private byte[] getCipherData(byte[] signature) {
+		log.debug("Retrieving public key");
 		PublicKey key = readPublicKeyFromFile("21680621_public.der");
 		byte[] cipherData = null;
 		try {
 			Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
 			cipher.init(Cipher.DECRYPT_MODE, key);
+			
+			log.debug("Public key read, checking signature");
 			cipherData = cipher.doFinal(signature);
 		} catch (NoSuchAlgorithmException e) {
 			log.fatal("Algorithm error", e);
@@ -117,18 +81,17 @@ public class AlarmService {
 		try {
 			URL cert = new URL("http://localhost/"+path);
 			URLConnection connection = cert.openConnection();
-			DataInputStream input = new DataInputStream(
-					connection.getInputStream());
-			
-			byte[] buffer = new byte[1024];
+
 			ByteArrayOutputStream baos = new ByteArrayOutputStream();
-			while(true) {
-				int n = input.read(buffer);
-				if (n<0) break;
-				baos.write(buffer, 0, n);
+			try (DataInputStream input = new DataInputStream(
+					connection.getInputStream())) {
+				byte[] buffer = new byte[1024];
+				while(true) {
+					int n = input.read(buffer);
+					if (n<0) break;
+					baos.write(buffer, 0, n);
+				}
 			}
-			
-//			byte[] keyBytes = key.getBytes();
 			
 			X509EncodedKeySpec keySpec = new X509EncodedKeySpec(baos.toByteArray());
 			KeyFactory keyFactory = KeyFactory.getInstance("RSA");
@@ -142,7 +105,6 @@ public class AlarmService {
 		} catch (IOException e) {
 			log.fatal("IO problem", e);
 		}
-		
 		
 		return publicKey;
 	}
